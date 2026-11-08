@@ -1,0 +1,38 @@
+BOLSILLO — GASTOS OFFLINE
+
+Incluye:
+- Alta, edición y eliminación de gastos.
+- Categorías: alquiler, alimentación, transporte, servicios, mascotas, préstamos, tarjetas de crédito, salud, educación, restaurante, compras y otros.
+- Fecha por gasto y filtros Día, Semana, Mes, Año y Todos.
+- Gráfico de barras por categoría.
+- Recordatorios mediante notificación local del teléfono.
+- Escáner QR con cámara y botón de prueba simulada sin cámara.
+- Almacenamiento local AsyncStorage. No hace falta internet para registrar/consultar datos después de instalar la app.
+
+INSTALACIÓN EN TU PROYECTO EXISTENTE
+1. Cerrá Expo con Ctrl+C.
+2. Hacé una copia de seguridad de la carpeta Expo-app-PM2.
+3. Descomprimí este ZIP.
+4. Copiá App.js, app.json, index.js y package.json a la raíz de Expo-app-PM2. Reemplazá solo después de hacer la copia.
+5. Abrí una terminal en esa carpeta y ejecutá:
+   npm install
+   npx expo install --fix
+6. Ejecutá:
+   npx expo start --clear
+7. Abrí Expo Go y escaneá el QR de Expo. Para conectar por primera vez, normalmente computadora y teléfono deben estar en la misma Wi-Fi.
+
+CONSERVAR LOS GASTOS
+La aplicación mantiene la clave de almacenamiento local "gastos" para intentar conservar datos de la versión anterior. No desinstales Expo Go ni borres sus datos antes de verificar que tus gastos siguen ahí. Si se abre como una aplicación/almacenamiento distinto, los datos pueden no aparecer.
+
+PROBAR QR SIN INTERNET
+1. Abrí Gastos > Escanear QR.
+2. Tocá "Probar sin cámara (QR simulado)".
+3. Se cargará un gasto de prueba por $1.250,50. Revisá y guardalo.
+4. Comprobá que aparece en la lista y que podés editarlo y eliminarlo.
+Para probar cámara real, escaneá un QR impreso o mostrado en otro dispositivo. La cámara del teléfono no puede escanear la pantalla del mismo teléfono.
+
+LIMITACIONES IMPORTANTES
+- El QR de una factura puede contener solo una URL o datos de validación y no el importe ni los productos. Si no se reconoce el total, completalo manualmente.
+- Las alarmas locales se programan una vez. Para un pago mensual, creá el próximo recordatorio manualmente. La app no envía SMS ni WhatsApp automáticamente.
+- Las notificaciones dependen de los permisos y de las restricciones de batería del teléfono. Probá con una alarma a 2 o 3 minutos.
+- La instalación de paquetes requiere internet. Luego, las funciones locales funcionan sin conexión. No puedo garantizar la compatibilidad real con tu teléfono sin ejecutar una prueba allí.

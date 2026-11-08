@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Bolsillo Gastos Offline",
+    "slug": "bolsillo-gastos-offline",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "recordatorios"
+        }
+      ]
+    ],
+    "android": {
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true
+    }
+  }
+}

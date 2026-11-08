@@ -1,0 +1,16 @@
+node_modules/
+.expo/
+dist/
+web-build/
+App.js.*
+*.zip
+.env
+.env.*
+!.env.example
+
+# Respaldos y archivos temporales
+*.antes_de_*
+*.respaldo*
+*.version_sin_QR
+exportacion.log
+QR_PRUEBA.txt

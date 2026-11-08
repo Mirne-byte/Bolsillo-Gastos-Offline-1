@@ -1,0 +1,513 @@
+import React,{useEffect,useMemo,useState} from 'react';
+
+import {Alert,FlatList,KeyboardAvoidingView,Modal,Platform,Pressable,SafeAreaView,ScrollView,StatusBar,StyleSheet,Text,TextInput,View} from 'react-native';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Svg, {Path, Circle} from 'react-native-svg';
+
+
+import * as Notifications from 'expo-notifications';
+
+
+
+Notifications.setNotificationHandler({handleNotification:async()=>({shouldShowAlert:true,shouldPlaySound:true,shouldSetBadge:false})});
+
+const KEY='gastos', RKEY='gastos_recordatorios_v1';
+
+const CATS=['Alquiler','Alimentación','Transporte','Servicios','Mascotas','Préstamos','Tarjetas de crédito','Salud','Educación','Restaurante','Compras','Otros'];
+
+const COLORS=['#4F46E5','#0D9488','#EA580C','#DB2777','#0284C7','#7C3AED','#65A30D','#CA8A04','#475569','#E11D48','#0891B2','#9333EA'];
+
+const CAT_EMOJI={
+  'Alquiler':'🏠','Alimentación':'🛒','Transporte':'🚗','Servicios':'💡',
+  'Mascotas':'🐾','Préstamos':'🤝','Tarjetas de crédito':'💳','Salud':'🏥',
+  'Educación':'📚','Restaurante':'🍽️','Compras':'🛍️','Otros':'📦'
+};
+
+const donutSegment=(startAngle,endAngle,outer=90,inner=54)=>{
+  const cx=110,cy=110,rad=Math.PI/180;
+  const point=(r,a)=>({x:cx+r*Math.cos((a-90)*rad),y:cy+r*Math.sin((a-90)*rad)});
+  const a=point(outer,startAngle),b=point(outer,endAngle);
+  const c=point(inner,endAngle),d=point(inner,startAngle);
+  const large=endAngle-startAngle>180?1:0;
+  return `M ${a.x} ${a.y} A ${outer} ${outer} 0 ${large} 1 ${b.x} ${b.y} L ${c.x} ${c.y} A ${inner} ${inner} 0 ${large} 0 ${d.x} ${d.y} Z`;
+};
+
+const monthLabel=(year,month)=>new Date(year,month,1).toLocaleDateString('es-AR',{month:'long',year:'numeric'});
+
+
+const today=()=>{let d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+
+const money=n=>new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:2}).format(Number(n)||0);
+
+const uid=()=>`${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+
+const dateObj=s=>{let p=String(s||today()).slice(0,10).split('-').map(Number);return p.length===3?new Date(p[0],p[1]-1,p[2]):new Date()};
+
+const fmtDate=s=>dateObj(s).toLocaleDateString('es-AR');
+
+const norm=g=>({...g,id:String(g.id??uid()),description:String(g.description??g.descripcion??'Gasto'),amount:Number(g.amount??g.importe??0),category:String(g.category??g.categoria??'Otros'),date:String(g.date??g.fecha??today()).slice(0,10)});
+
+function inPeriod(s,period){const d=dateObj(s),n=new Date(),start=new Date(n.getFullYear(),n.getMonth(),n.getDate());if(period==='Todos')return true;if(period==='Día')return d>=start&&d<new Date(start.getTime()+86400000);if(period==='Semana'){let monday=new Date(start);monday.setDate(start.getDate()-((start.getDay()+6)%7));let next=new Date(monday);next.setDate(monday.getDate()+7);return d>=monday&&d<next}if(period==='Mes')return d.getFullYear()===n.getFullYear()&&d.getMonth()===n.getMonth();return d.getFullYear()===n.getFullYear()}
+
+
+
+
+export default function App(){
+
+const [items,setItems]=useState([]),[reminders,setReminders]=useState([]),[loaded,setLoaded]=useState(false);
+
+const [tab,setTab]=useState('Gastos'),[period,setPeriod]=useState('Mes'),[search,setSearch]=useState('');
+
+const [modal,setModal]=useState(false),[editing,setEditing]=useState(null),[desc,setDesc]=useState(''),[amount,setAmount]=useState(''),[cat,setCat]=useState('Otros'),[date,setDate]=useState(today());
+
+const [deleteTarget,setDeleteTarget]=useState(null);
+
+const [rModal,setRModal]=useState(false),[rTitle,setRTitle]=useState(''),[rAmount,setRAmount]=useState(''),[rDate,setRDate]=useState(today()),[rTime,setRTime]=useState('09:00');
+const [editingReminder,setEditingReminder]=useState(null);
+
+useEffect(()=>{(async()=>{try{let [a,b]=await Promise.all([AsyncStorage.getItem(KEY),AsyncStorage.getItem(RKEY)]);if(a){let x=JSON.parse(a);if(Array.isArray(x))setItems(x.map(norm))}if(b){let x=JSON.parse(b);if(Array.isArray(x))setReminders(x)}}catch{Alert.alert('Aviso','No se pudieron leer algunos datos guardados.')}finally{setLoaded(true)}})();if(Platform.OS!=='web'){Notifications.requestPermissionsAsync().catch(()=>{});if(Platform.OS==='android')Notifications.setNotificationChannelAsync('recordatorios',{name:'Recordatorios de pagos',importance:Notifications.AndroidImportance.MAX,sound:'default'}).catch(()=>{})}},[]);
+
+const saveItems=async x=>{setItems(x);try{await AsyncStorage.setItem(KEY,JSON.stringify(x))}catch{Alert.alert('Error','No se pudieron guardar los gastos')}};
+
+const saveReminders=async x=>{setReminders(x);await AsyncStorage.setItem(RKEY,JSON.stringify(x)).catch(()=>Alert.alert('Error','No se pudo guardar el recordatorio'))};
+
+const openExpense=g=>{setEditing(g||null);setDesc(g?.description||'');setAmount(g?String(g.amount):'');setCat(g?.category||'Otros');setDate(g?.date||today());setModal(true)};
+
+const saveExpense=async()=>{let n=Number(amount.trim().replace(/\s/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',','.'));if(!desc.trim())return Alert.alert('Falta descripción','Escribí el concepto del gasto.');if(!Number.isFinite(n)||n<=0)return Alert.alert('Importe inválido','Ingresá un importe mayor que cero.');if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return Alert.alert('Fecha inválida','Usá AAAA-MM-DD.');let g=norm({...editing,id:editing?.id||uid(),description:desc.trim(),amount:n,category:cat,date});await saveItems(editing?items.map(x=>String(x.id)===String(editing.id)?g:x):[g,...items]);setModal(false)};
+
+const deleteExpense=g=>setDeleteTarget(g);
+
+const confirmDelete=async()=>{if(!deleteTarget)return;const id=String(deleteTarget.id);await saveItems(items.filter(x=>String(x.id)!==id));setDeleteTarget(null)};
+
+const shown=useMemo(()=>items.filter(g=>inPeriod(g.date,period)&&`${g.description} ${g.category}`.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>dateObj(b.date)-dateObj(a.date)),[items,period,search]);
+
+const total=shown.reduce((s,g)=>s+(Number(g.amount)||0),0),allTotal=items.reduce((s,g)=>s+(Number(g.amount)||0),0);
+
+const chart=useMemo(()=>{let m={};shown.forEach(g=>m[g.category]=(m[g.category]||0)+Number(g.amount||0));return Object.entries(m).sort((a,b)=>b[1]-a[1])},[shown]),maxChart=Math.max(1,...chart.map(x=>x[1]));
+
+ const monthlyHistory=useMemo(()=>{
+   const now=new Date();
+   const months=[];
+   for(let offset=11;offset>=0;offset--){
+     const d=new Date(now.getFullYear(),now.getMonth()-offset,1);
+     const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+     const amount=items.reduce((sum,g)=>sum+(String(g.date||'').slice(0,7)===key?(Number(g.amount)||0):0),0);
+     months.push({key,label:monthLabel(d.getFullYear(),d.getMonth()),amount});
+   }
+   return months;
+ },[items]);
+ const monthlyMax=Math.max(1,...monthlyHistory.map(m=>m.amount));
+ const chartTotal=chart.reduce((sum,item)=>sum+item[1],0);
+
+
+
+
+
+
+
+const showMessage = (title, message) => {
+
+   if (Platform.OS === 'web') {
+
+     window.alert(`${title}\n\n${message}`);
+
+   } else {
+
+     Alert.alert(title, message);
+
+   }
+
+};
+
+
+
+
+const scheduleReminderAlarm = async (title, date, time, amount) => {
+  if (Platform.OS === 'web') return null;
+
+  const permission = await Notifications.requestPermissionsAsync();
+  if (permission.status !== 'granted') {
+    throw new Error('Activá las notificaciones para programar la alarma.');
+  }
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('recordatorios', {
+      name: 'Recordatorios de pagos',
+      importance: Notifications.AndroidImportance.MAX,
+      sound: 'default'
+    });
+  }
+
+  const [y, m, d] = date.split('-').map(Number);
+  const [h, min] = time.split(':').map(Number);
+  const when = new Date(y, m - 1, d, h, min);
+
+  return await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '⏰ Recordatorio de pago',
+      body: '🔔 ' + title +
+        ' · 📅 ' + fmtDate(date) +
+        ' · ⏰ ' + time +
+        (amount != null ? ' · 💰 ' + money(amount) : ''),
+      sound: 'default',
+      data: { type: 'payment' }
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: when,
+      channelId: 'recordatorios'
+    }
+  });
+};
+
+const editReminder = r => {
+  setEditingReminder(r);
+  setRTitle(r.title || '');
+  setRAmount(r.amount != null ? String(r.amount) : '');
+  setRDate(r.date || today());
+  setRTime(r.time || '09:00');
+  setRModal(true);
+};
+
+const addReminder = async () => {
+  try {
+    const title = rTitle.trim();
+
+    if (!title) {
+      showMessage('Falta concepto', 'Escribí qué pago querés recordar.');
+      return;
+    }
+
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(rDate) ||
+      !/^\d{2}:\d{2}$/.test(rTime)
+    ) {
+      showMessage('Fecha u hora inválida', 'Usá AAAA-MM-DD y HH:MM.');
+      return;
+    }
+
+    const [y, m, d] = rDate.split('-').map(Number);
+    const [h, min] = rTime.split(':').map(Number);
+    const when = new Date(y, m - 1, d, h, min);
+
+    if (
+      when.getFullYear() !== y ||
+      when.getMonth() !== m - 1 ||
+      when.getDate() !== d ||
+      h > 23 || min > 59
+    ) {
+      showMessage('Fecha u hora inválida', 'Revisá la fecha y la hora.');
+      return;
+    }
+
+    if (when <= new Date()) {
+      showMessage('Fecha pasada', 'Elegí una fecha y hora futuras.');
+      return;
+    }
+
+    const amountValue = rAmount.trim()
+      ? Number(rAmount.replace(',', '.'))
+      : null;
+
+    if (amountValue !== null && (!Number.isFinite(amountValue) || amountValue < 0)) {
+      showMessage('Importe inválido', 'Ingresá un importe válido.');
+      return;
+    }
+
+    const notificationId = await scheduleReminderAlarm(
+      title, rDate, rTime, amountValue
+    );
+
+    const reminder = {
+      id: editingReminder ? editingReminder.id : uid(),
+      title,
+      amount: amountValue,
+      date: rDate,
+      time: rTime,
+      notificationId,
+      status: Platform.OS === 'web' ? 'saved' : 'scheduled'
+    };
+
+    if (editingReminder?.notificationId && Platform.OS !== 'web') {
+      await Notifications.cancelScheduledNotificationAsync(
+        editingReminder.notificationId
+      ).catch(error => console.warn('No se pudo cancelar la alarma anterior:', error));
+    }
+
+    const updated = editingReminder
+      ? reminders.map(item => item.id === editingReminder.id ? reminder : item)
+      : [reminder, ...reminders];
+
+    await saveReminders(updated);
+
+    const wasEditing = !!editingReminder;
+    setRModal(false);
+    setEditingReminder(null);
+    setRTitle('');
+    setRAmount('');
+    setRDate(today());
+    setRTime('09:00');
+
+    showMessage(
+      wasEditing ? 'Recordatorio actualizado' : 'Recordatorio guardado',
+      `${title}\n${fmtDate(rDate)} a las ${rTime}\n\n` +
+      (Platform.OS === 'web'
+        ? 'El aviso quedó guardado. La versión web no programa alarmas futuras en segundo plano.'
+        : 'La alarma quedó programada en el dispositivo.')
+    );
+  } catch (error) {
+    console.error('Error al guardar el recordatorio:', error);
+    showMessage(
+      'No se pudo guardar',
+      String(error?.message || 'Revisá los datos y los permisos de notificación.')
+    );
+  }
+};
+
+const cancelReminder = r => Alert.alert(
+  'Cancelar recordatorio',
+  `¿Querés cancelar solamente la alarma de ${r.title}? El registro seguirá en la lista.`,
+  [
+    { text: 'Volver', style: 'cancel' },
+    {
+      text: 'Sí, cancelar alarma',
+      style: 'destructive',
+      onPress: async () => {
+        try {
+          if (r.notificationId && Platform.OS !== 'web') {
+            await Notifications.cancelScheduledNotificationAsync(r.notificationId);
+          }
+          await saveReminders(reminders.map(item =>
+            item.id === r.id
+              ? { ...item, notificationId: null, status: 'cancelled' }
+              : item
+          ));
+          showMessage('Alarma cancelada', 'El recordatorio permanece guardado en la lista.');
+        } catch (error) {
+          showMessage('No se pudo cancelar', String(error?.message || error));
+        }
+      }
+    }
+  ]
+);
+
+const reactivateReminder = async r => {
+  try {
+    if (Platform.OS === 'web') {
+      showMessage('No disponible en web', 'La versión web conserva el aviso, pero no programa alarmas futuras.');
+      return;
+    }
+
+    const when = new Date(`${r.date}T${r.time || '09:00'}:00`);
+    if (when <= new Date()) {
+      showMessage('Fecha pasada', 'Editá primero el vencimiento y elegí una fecha futura.');
+      return;
+    }
+
+    const notificationId = await scheduleReminderAlarm(
+      r.title, r.date, r.time || '09:00', r.amount
+    );
+
+    await saveReminders(reminders.map(item =>
+      item.id === r.id
+        ? { ...item, notificationId, status: 'scheduled' }
+        : item
+    ));
+
+    showMessage('Alarma reactivada', `Se programó nuevamente el aviso de ${r.title}.`);
+  } catch (error) {
+    showMessage('No se pudo reactivar', String(error?.message || error));
+  }
+};
+
+const deleteReminder = r => Alert.alert(
+  'Eliminar recordatorio',
+  `¿Querés eliminar definitivamente ${r.title}?`,
+  [
+    { text: 'Volver', style: 'cancel' },
+    {
+      text: 'Sí, eliminar',
+      style: 'destructive',
+      onPress: async () => {
+        try {
+          if (r.notificationId && Platform.OS !== 'web') {
+            await Notifications.cancelScheduledNotificationAsync(r.notificationId);
+          }
+          await saveReminders(reminders.filter(item => item.id !== r.id));
+          showMessage('Recordatorio eliminado', 'El registro se eliminó definitivamente.');
+        } catch (error) {
+          showMessage('No se pudo eliminar', String(error?.message || error));
+        }
+      }
+    }
+  ]
+);
+
+
+
+if(!loaded)return <SafeAreaView style={s.center}><Text style={s.logo}>BOLSILLO</Text><Text>Cargando gastos guardados…</Text></SafeAreaView>;
+
+return <SafeAreaView style={s.safe}><StatusBar barStyle="light-content" backgroundColor="#172554"/>
+
+<><View style={s.header}><View><Text style={s.logo}>BOLSILLO</Text><Text style={s.tagline}>Tus cuentas, bajo control</Text></View><Pressable style={s.plus} onPress={()=>openExpense()}><Text style={s.plusText}>＋</Text></Pressable></View>
+
+<View style={s.tabs}>{['Gastos','Categorías','Pagos'].map(t=><Pressable key={t} onPress={()=>setTab(t)} style={[s.tab,tab===t&&s.tabOn]}><Text style={[s.tabText,tab===t&&s.tabTextOn]}>{t}</Text></Pressable>)}</View>
+
+{tab==='Gastos'&&<ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled"><View style={s.hero}><Text style={s.heroLabel}>GASTOS · {period.toUpperCase()}</Text><Text style={s.heroAmount}>{money(total)}</Text><Text style={s.heroSmall}>{shown.length} movimientos · Histórico {money(allTotal)}</Text></View>
+
+<View style={s.filters}>{['Día','Semana','Mes','Año','Todos'].map(p=><Pressable key={p} onPress={()=>setPeriod(p)} style={[s.filter,period===p&&s.filterOn]}><Text style={[s.filterText,period===p&&s.filterTextOn]}>{p}</Text></Pressable>)}</View>
+
+<TextInput value={search} onChangeText={setSearch} placeholder="Buscar gasto o categoría…" placeholderTextColor="#94A3B8" style={s.search}/>
+
+<View style={s.actions}><Pressable style={s.primary} onPress={()=>openExpense()}><Text style={s.primaryText}>＋ Nuevo gasto</Text></Pressable></View>
+
+<Text style={s.section}>Movimientos</Text>{shown.length===0?<View style={s.empty}><Text style={s.emptyTitle}>Todavía no hay gastos</Text><Text style={s.emptyText}>Agregá uno para comenzar.</Text></View>:shown.map(g=><View key={String(g.id)} style={s.expense}><View style={[s.avatar,{backgroundColor:COLORS[Math.max(0,CATS.indexOf(g.category))%COLORS.length]+'20'}]}><Text style={{color:COLORS[Math.max(0,CATS.indexOf(g.category))%COLORS.length],fontWeight:'900'}}>{CAT_EMOJI[g.category]||'📦'}</Text></View><View style={s.expMain}><Text style={s.expName}>{g.description}</Text><Text style={s.expMeta}>{g.category} · {fmtDate(g.date)}</Text><View style={s.miniActions}><Pressable onPress={()=>openExpense(g)}><Text style={s.edit}>Editar</Text></Pressable><Pressable onPress={()=>deleteExpense(g)}><Text style={s.del}>Eliminar</Text></Pressable></View></View><Text style={s.expAmount}>{money(g.amount)}</Text></View>)}<Text style={s.note}>Los gastos se guardan localmente en este teléfono.</Text></ScrollView>}
+
+{tab==='Categorías'&&<ScrollView contentContainerStyle={s.content}>
+ <Text style={s.pageTitle}>Gastos por categoría</Text>
+ <Text style={s.sub}>Distribución del período seleccionado, de mayor a menor consumo.</Text>
+ <View style={s.filters}>{['Día','Semana','Mes','Año','Todos'].map(p=><Pressable key={p} onPress={()=>setPeriod(p)} style={[s.filter,period===p&&s.filterOn]}><Text style={[s.filterText,period===p&&s.filterTextOn]}>{p}</Text></Pressable>)}</View>
+ <View style={s.chartCard}>
+   <Text style={s.chartTotal}>{money(chartTotal)}</Text>
+   <Text style={s.sub}>Total gastado en el período</Text>
+   {chart.length===0?<Text style={s.emptyText}>No hay gastos en este período.</Text>:<>
+     <View style={s.donutWrap}>
+       <Svg width={220} height={220} viewBox="0 0 220 220">
+         {chart.map(([name,val],index)=>{
+           const start=chart.slice(0,index).reduce((sum,item)=>sum+(item[1]/chartTotal)*360,0);
+           const end=start+(val/chartTotal)*360;
+           const color=COLORS[Math.max(0,CATS.indexOf(name))%COLORS.length];
+           return <Path key={name} d={donutSegment(start,Math.min(end,start+359.99))} fill={color}/>;
+         })}
+         <Circle cx="110" cy="110" r="49" fill="#FFFFFF"/>
+       </Svg>
+       <View style={s.donutCenter}><Text style={s.donutCenterLabel}>TOTAL</Text><Text style={s.donutCenterValue}>{money(chartTotal)}</Text></View>
+     </View>
+     <Text style={s.legendTitle}>Detalle por categoría</Text>
+     {chart.map(([name,val])=>{
+       const color=COLORS[Math.max(0,CATS.indexOf(name))%COLORS.length];
+       const percent=chartTotal>0?(val/chartTotal)*100:0;
+       return <View key={name} style={s.legendRow}>
+         <View style={[s.dot,{backgroundColor:color}]}/>
+         <Text style={s.legendEmoji}>{CAT_EMOJI[name]||'📦'}</Text>
+         <Text style={s.chartName}>{name}</Text>
+         <View style={s.legendNumbers}><Text style={s.chartVal}>{money(val)}</Text><Text style={s.legendPercent}>{percent.toFixed(1).replace('.',',')}%</Text></View>
+       </View>;
+     })}
+   </>}
+ </View>
+ <View style={[s.chartCard,{marginTop:14}]}>
+   <Text style={s.legendTitle}>Historial mensual</Text>
+   <Text style={s.sub}>Gastos acumulados de los últimos 12 meses.</Text>
+   {monthlyHistory.map(m=><View key={m.key} style={s.monthRow}>
+     <View style={s.monthHead}><Text style={s.monthName}>{m.label}</Text><Text style={s.chartVal}>{money(m.amount)}</Text></View>
+     <View style={s.barTrack}><View style={[s.bar,{width:`${m.amount/monthlyMax*100}%`,backgroundColor:'#4F46E5'}]}/></View>
+   </View>)}
+   <View style={s.monthBalance}><Text style={s.monthBalanceLabel}>Total gastado en los 12 meses</Text><Text style={s.monthBalanceValue}>{money(monthlyHistory.reduce((sum,m)=>sum+m.amount,0))}</Text></View>
+   <Text style={s.balanceNote}>Saldo neto no disponible: la aplicación todavía no registra ingresos.</Text>
+ </View>
+ </ScrollView>}
+
+{tab==='Pagos'&&<ScrollView contentContainerStyle={s.content}>
+  <Text style={s.pageTitle}>💳 Pagos y vencimientos</Text>
+  <Text style={s.sub}>
+    Programá recordatorios locales para alquiler, tarjetas, préstamos y servicios.
+    En el celular se puede activar una notificación con sonido sin necesitar internet.
+  </Text>
+
+  <View style={s.reminderHeader}>
+    <View style={{flex:1}}>
+      <Text style={s.section}>⏰ Próximos recordatorios</Text>
+      <Text style={s.reminderHint}>Vencimientos ordenados por fecha y hora</Text>
+    </View>
+    <Text style={s.reminderCount}>{reminders.length}</Text>
+  </View>
+
+  <Pressable style={s.primary} onPress={()=>{
+    setRTitle('');
+    setRAmount('');
+    setRDate(today());
+    setRTime('09:00');
+    setEditingReminder(null);
+    setRModal(true);
+  }}>
+    <Text style={s.primaryText}>＋ 🔔 Nuevo recordatorio</Text>
+  </Pressable>
+
+  {reminders.length===0 ?
+    <View style={s.empty}>
+      <Text style={{fontSize:38}}>⏰</Text>
+      <Text style={s.emptyTitle}>Todavía no hay vencimientos</Text>
+      <Text style={s.emptyText}>Agregá un pago con fecha y hora para programar su alarma.</Text>
+    </View>
+    : [...reminders].sort((a,b)=>{
+        const da=new Date(`${a.date}T${a.time||'00:00'}:00`).getTime();
+        const db=new Date(`${b.date}T${b.time||'00:00'}:00`).getTime();
+        return da-db;
+      }).map(r=>{
+        const isPast=new Date(`${r.date}T${r.time||'00:00'}:00`).getTime()<=Date.now();
+        return <View key={r.id} style={s.reminderCard}>
+          <View style={s.reminderIcon}><Text style={{fontSize:24}}>🔔</Text></View>
+          <View style={s.expMain}>
+            <Text style={s.expName}>{r.title}</Text>
+            <Text style={s.expMeta}>📅 {fmtDate(r.date)}  ·  ⏰ {r.time}</Text>
+            {r.amount!=null&&<Text style={s.reminderAmount}>💰 {money(r.amount)}</Text>}
+            <Text style={[
+              s.reminderStatus,
+              r.status === 'cancelled' && {color:'#B91C1C'},
+              isPast && s.reminderPast
+            ]}>
+              {r.status === 'cancelled'
+                ? 'Alarma cancelada · registro conservado'
+                : isPast
+                  ? 'Vencimiento pasado'
+                  : r.notificationId
+                    ? 'Alarma programada con sonido'
+                    : 'Aviso guardado · alarma no programada en web'}
+            </Text>
+            <View style={s.miniActions}>
+              <Pressable onPress={()=>editReminder(r)}>
+                <Text style={s.edit}>Editar</Text>
+              </Pressable>
+              {r.status === 'cancelled' ? (
+                <Pressable onPress={()=>reactivateReminder(r)}>
+                  <Text style={{fontSize:11,fontWeight:'800',color:'#047857'}}>Reactivar alarma</Text>
+                </Pressable>
+              ) : (
+                <Pressable onPress={()=>cancelReminder(r)}>
+                  <Text style={s.cancelReminderText}>Cancelar alarma</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={()=>deleteReminder(r)}>
+                <Text style={s.del}>Eliminar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>;
+      })}
+
+  <Text style={s.note}>
+    🔊 El sonido depende de los permisos y del volumen del dispositivo. Los recordatorios son de una sola vez: para un vencimiento mensual, programá la próxima fecha. La versión web guarda los avisos, pero no garantiza alarmas futuras cuando el navegador está cerrado.
+  </Text>
+</ScrollView>}
+
+<View style={s.bottom}>{[['Gastos','⌂'],['Categorías','▥'],['Pagos','◷']].map(([t,i])=><Pressable key={t} onPress={()=>setTab(t)} style={s.nav}><Text style={[s.navIcon,tab===t&&s.navOn]}>{i}</Text><Text style={[s.navText,tab===t&&s.navOn]}>{t}</Text></Pressable>)}</View></>
+
+<Modal visible={modal} transparent animationType="slide" onRequestClose={()=>setModal(false)}><KeyboardAvoidingView style={s.overlay} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.modalScroll} keyboardShouldPersistTaps="handled"><View style={s.modal}><View style={s.modalHead}><Text style={s.modalTitle}>{editing?'Editar gasto':'Nuevo gasto'}</Text><Pressable onPress={()=>setModal(false)}><Text style={s.close}>✕</Text></Pressable></View><Text style={s.label}>Descripción</Text><TextInput value={desc} onChangeText={setDesc} placeholder="Ej.: Alquiler de octubre" style={s.input}/><Text style={s.label}>Importe en pesos</Text><TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="Ej.: 150000,50" style={s.input}/><Text style={s.label}>📅 Fecha de vencimiento (AAAA-MM-DD)</Text><TextInput value={date} onChangeText={setDate} placeholder="2026-10-24" style={s.input}/><Text style={s.label}>Categoría</Text><View style={s.catGrid}>{CATS.map(c=><Pressable key={c} onPress={()=>setCat(c)} style={[s.chip,cat===c&&s.chipOn]}><Text style={[s.chipText,cat===c&&s.chipTextOn]}>{CAT_EMOJI[c]||'📦'} {c}</Text></Pressable>)}</View><Pressable style={s.save} onPress={saveExpense}><Text style={s.saveText}>Guardar gasto</Text></Pressable></View></ScrollView></KeyboardAvoidingView></Modal>
+
+<Modal visible={!!deleteTarget} transparent animationType="fade" onRequestClose={()=>setDeleteTarget(null)}><View style={s.confirmOverlay}><View style={s.confirmCard}><Text style={s.confirmTitle}>¿Eliminar gasto?</Text><Text style={s.confirmBody}>{deleteTarget?`${deleteTarget.description} · ${money(deleteTarget.amount)}`:''}</Text><Text style={s.confirmBody}>Esta acción no se puede deshacer.</Text><View style={s.confirmActions}><Pressable style={s.cancelDelete} onPress={()=>setDeleteTarget(null)}><Text style={s.cancelDeleteText}>Cancelar</Text></Pressable><Pressable style={s.confirmDelete} onPress={confirmDelete}><Text style={s.confirmDeleteText}>Sí, eliminar</Text></Pressable></View></View></View></Modal>
+
+<Modal visible={rModal} transparent animationType="slide" onRequestClose={()=>setRModal(false)}><KeyboardAvoidingView style={s.overlay} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.modalScroll} keyboardShouldPersistTaps="handled"><View style={s.modal}><View style={s.modalHead}><Text style={s.modalTitle}>{editingReminder ? '✏️ Editar recordatorio' : '⏰ 🔔 Nuevo recordatorio'}</Text><Pressable onPress={()=>setRModal(false)}><Text style={s.close}>✕</Text></Pressable></View><Text style={s.label}>🔔 Concepto del pago</Text><TextInput value={rTitle} onChangeText={setRTitle} placeholder="Alquiler, tarjeta, préstamo…" style={s.input}/><Text style={s.label}>💰 Importe opcional</Text><TextInput value={rAmount} onChangeText={setRAmount} keyboardType="decimal-pad" placeholder="150000" style={s.input}/><Text style={s.label}>📅 Fecha de vencimiento (AAAA-MM-DD)</Text><TextInput value={rDate} onChangeText={setRDate} placeholder="2026-11-05" style={s.input}/><Text style={s.label}>🕒 ⏰ Hora de la alarma (HH:MM)</Text><TextInput value={rTime} onChangeText={setRTime} placeholder="09:00" style={s.input}/><Pressable style={s.save} onPress={addReminder}><Text style={s.saveText}>{editingReminder ? 'Guardar cambios y actualizar alarma' : '🔔⏰ Guardar y programar alarma'}</Text></Pressable></View></ScrollView></KeyboardAvoidingView></Modal>
+
+</SafeAreaView>}
+
+const s=StyleSheet.create({
+
+safe:{flex:1,backgroundColor:'#F4F6FB'},center:{flex:1,alignItems:'center',justifyContent:'center',backgroundColor:'#F4F6FB'},header:{backgroundColor:'#172554',paddingHorizontal:21,paddingTop:15,paddingBottom:17,flexDirection:'row',justifyContent:'space-between',alignItems:'center'},logo:{fontSize:22,fontWeight:'900',letterSpacing:2,color:'#FFD700'},tagline:{fontSize:12,color:'#C7D2FE',marginTop:3},plus:{width:42,height:42,borderRadius:14,backgroundColor:'#059669',alignItems:'center',justifyContent:'center'},plusText:{fontSize:27,color:'#FFF'},tabs:{flexDirection:'row',backgroundColor:'#172554',paddingHorizontal:14,paddingBottom:12,gap:7},tab:{flex:1,padding:10,alignItems:'center',borderRadius:10},tabOn:{backgroundColor:'#FFF'},tabText:{fontSize:13,fontWeight:'700',color:'#C7D2FE'},tabTextOn:{color:'#312E81'},content:{padding:15,paddingBottom:25},hero:{backgroundColor:'#F8FAFC',padding:19,borderRadius:21,marginBottom:15},heroLabel:{fontSize:11,fontWeight:'800',letterSpacing:1.2,color:'#475569'},heroAmount:{fontSize:30,fontWeight:'900',color:'#312E81',marginTop:8},heroSmall:{fontSize:11,color:'#334155',marginTop:12},filters:{flexDirection:'row',flexWrap:'wrap',gap:6,marginBottom:13},
+filter:{paddingVertical:8,paddingHorizontal:12,borderRadius:18,backgroundColor:'#FFFFFF',borderWidth:1,borderColor:'#A5B4FC'},
+filterOn:{backgroundColor:'#0F9D8A',borderColor:'#0F9D8A'},
+filterText:{fontSize:12,fontWeight:'700',color:'#334155'},
+filterTextOn:{color:'#FFF'},search:{height:44,borderRadius:12,backgroundColor:'#FFF',borderColor:'#E2E8F0',borderWidth:1,paddingHorizontal:13,marginBottom:12,color:'#0F172A'},actions:{flexDirection:'row',gap:9,marginBottom:21,alignItems:'stretch'},confirmOverlay:{flex:1,backgroundColor:'rgba(15,23,42,0.65)',alignItems:'center',justifyContent:'center',padding:22},confirmCard:{width:'100%',maxWidth:420,backgroundColor:'#FFFFFF',borderRadius:20,padding:22},confirmTitle:{fontSize:21,fontWeight:'900',color:'#0F172A'},confirmBody:{fontSize:14,color:'#475569',marginTop:10,lineHeight:20},confirmActions:{flexDirection:'row',gap:10,marginTop:22},cancelDelete:{flex:1,backgroundColor:'#E2E8F0',borderRadius:12,padding:13,alignItems:'center'},cancelDeleteText:{fontSize:13,fontWeight:'800',color:'#334155'},confirmDelete:{flex:1,backgroundColor:'#DC2626',borderRadius:12,padding:13,alignItems:'center'},confirmDeleteText:{fontSize:13,fontWeight:'900',color:'#FFFFFF'},primary:{flex:1,backgroundColor:'#059669',borderRadius:13,padding:14,alignItems:'center',justifyContent:'center',marginBottom:12},primaryText:{fontSize:13,fontWeight:'800',color:'#FFF'},secondary:{flex:1,backgroundColor:'#E0E7FF',borderRadius:13,padding:14,alignItems:'center',justifyContent:'center',marginBottom:12},secondaryText:{fontSize:12,fontWeight:'800',color:'#3730A3'},section:{fontSize:18,fontWeight:'900',color:'#0F172A',marginBottom:10},expense:{flexDirection:'row',alignItems:'center',backgroundColor:'#FFF',padding:12,borderRadius:15,marginBottom:9,borderWidth:1,borderColor:'#EEF2F7'},avatar:{width:40,height:40,borderRadius:13,alignItems:'center',justifyContent:'center',marginRight:10},expMain:{flex:1},expName:{fontSize:14,fontWeight:'800',color:'#0F172A'},expMeta:{fontSize:11,color:'#64748B',marginTop:4},expAmount:{fontSize:12,fontWeight:'900',color:'#0F172A'},miniActions:{flexDirection:'row',gap:13,marginTop:6},edit:{fontSize:11,fontWeight:'800',color:'#4338CA'},del:{fontSize:11,fontWeight:'800',color:'#DC2626'},empty:{backgroundColor:'#FFF',padding:25,borderRadius:17,alignItems:'center',marginTop:8},emptyTitle:{fontSize:16,fontWeight:'900',color:'#1E293B'},emptyText:{fontSize:12,color:'#64748B',textAlign:'center',lineHeight:19,marginTop:6},note:{fontSize:11,color:'#94A3B8',textAlign:'center',lineHeight:17,marginTop:18},bottom:{flexDirection:'row',paddingTop:9,paddingBottom:Platform.OS==='android'?10:5,backgroundColor:'#172554',borderTopWidth:1,borderTopColor:'#172554'},nav:{flex:1,alignItems:'center',gap:3},navIcon:{fontSize:20,color:'#CBD5E1'},navText:{fontSize:10,fontWeight:'700',color:'#CBD5E1'},navOn:{color:'#40E0D0'},pageTitle:{fontSize:23,fontWeight:'900',color:'#0F172A'},sub:{fontSize:13,color:'#64748B',lineHeight:20,marginTop:5,marginBottom:16},chartCard:{backgroundColor:'#FFF',padding:17,borderRadius:19,borderWidth:1,borderColor:'#E2E8F0'},chartTotal:{fontSize:25,fontWeight:'900',color:'#312E81'},chartRow:{marginTop:17},chartLabels:{flexDirection:'row',alignItems:'center',marginBottom:7},dot:{width:9,height:9,borderRadius:5,marginRight:8},chartName:{flex:1,fontSize:12,fontWeight:'700',color:'#334155'},chartVal:{fontSize:12,fontWeight:'800',color:'#0F172A'},barTrack:{height:8,backgroundColor:'#EEF2F7',borderRadius:5,overflow:'hidden'},bar:{height:8,borderRadius:5},donutWrap:{alignItems:'center',justifyContent:'center',marginVertical:8},donutCenter:{position:'absolute',width:100,alignItems:'center'},donutCenterLabel:{fontSize:10,fontWeight:'800',color:'#64748B'},donutCenterValue:{fontSize:12,fontWeight:'900',color:'#312E81',textAlign:'center'},legendTitle:{fontSize:16,fontWeight:'900',color:'#0F172A',marginTop:8,marginBottom:10},legendRow:{flexDirection:'row',alignItems:'center',paddingVertical:10,borderBottomWidth:1,borderBottomColor:'#F1F5F9'},legendEmoji:{fontSize:18,marginRight:8},legendNumbers:{alignItems:'flex-end'},legendPercent:{fontSize:10,color:'#64748B',marginTop:2},monthRow:{marginTop:12},monthHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:6},monthName:{fontSize:12,fontWeight:'700',color:'#334155',textTransform:'capitalize'},monthBalance:{borderTopWidth:1,borderTopColor:'#E2E8F0',marginTop:16,paddingTop:14,flexDirection:'row',justifyContent:'space-between',alignItems:'center'},monthBalanceLabel:{fontSize:11,fontWeight:'800',color:'#475569',flex:1},monthBalanceValue:{fontSize:14,fontWeight:'900',color:'#312E81'},balanceNote:{fontSize:10,color:'#94A3B8',marginTop:9,lineHeight:15},reminder:{flexDirection:'row',alignItems:'center',backgroundColor:'#FFF',padding:14,borderRadius:15,marginTop:10,borderWidth:1,borderColor:'#E2E8F0',gap:10},reminderHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:5,marginBottom:10},reminderHint:{fontSize:11,color:'#64748B',marginTop:-5},reminderCount:{minWidth:32,height:32,textAlign:'center',textAlignVertical:'center',overflow:'hidden',borderRadius:16,backgroundColor:'#E0E7FF',color:'#312E81',fontWeight:'900',paddingTop:7},reminderCard:{flexDirection:'row',alignItems:'flex-start',backgroundColor:'#FFFFFF',padding:14,borderRadius:16,marginTop:9,borderWidth:1,borderColor:'#E2E8F0',gap:11},reminderIcon:{width:42,height:42,borderRadius:13,backgroundColor:'#EEF2FF',alignItems:'center',justifyContent:'center'},reminderAmount:{fontSize:13,fontWeight:'900',color:'#312E81',marginTop:6},reminderStatus:{fontSize:10,fontWeight:'800',color:'#047857',marginTop:7},reminderPast:{color:'#B45309'},cancelReminderButton:{alignSelf:'flex-start',backgroundColor:'#FEE2E2',paddingHorizontal:11,paddingVertical:8,borderRadius:9,marginTop:9},cancelReminderText:{fontSize:11,fontWeight:'900',color:'#B91C1C'},overlay:{flex:1,backgroundColor:'rgba(15,23,42,.6)',justifyContent:'flex-end'},modalScroll:{flexGrow:1,justifyContent:'flex-end'},modal:{backgroundColor:'#FFFEF7',padding:20,paddingBottom:28,borderTopLeftRadius:24,borderTopRightRadius:24},modalHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:15},modalTitle:{fontSize:21,fontWeight:'900',color:'#0F172A'},close:{fontSize:20,color:'#64748B',padding:4},label:{fontSize:12,fontWeight:'800',color:'#334155',marginBottom:7,marginTop:10},input:{backgroundColor:'#FFFBE8',borderWidth:1,borderColor:'#F1E3A8',borderRadius:12,paddingHorizontal:13,paddingVertical:12,fontSize:14,color:'#0F172A'},catGrid:{flexDirection:'row',flexWrap:'wrap',gap:7,marginTop:3},chip:{borderRadius:20,paddingHorizontal:11,paddingVertical:8,backgroundColor:'#E2E8F0'},chipOn:{backgroundColor:'#312E81'},chipText:{fontSize:11,fontWeight:'700',color:'#334155'},chipTextOn:{color:'#FFF'},save:{marginTop:21,backgroundColor:'#312E81',borderRadius:13,padding:15,alignItems:'center'},saveText:{fontSize:14,fontWeight:'900',color:'#FFF'}
+
+});

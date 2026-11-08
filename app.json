@@ -22,6 +22,9 @@
     },
     "ios": {
       "supportsTablet": true
+    },
+    "experiments": {
+      "baseUrl": "/Bolsillo-Gastos-Offline-1"
     }
   }
 }
